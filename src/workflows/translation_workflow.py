@@ -3,6 +3,7 @@ Main workflow for DOCX translation.
 Preserves all formatting including tables, headers, footers, styles, and images.
 """
 
+import logging
 import time
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +22,8 @@ from src.workflows.activities import (
     rebuild_docx,
     translate_content_chunks,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @workflows.workflow.define(
@@ -48,14 +51,12 @@ class DOCXTranslationWorkflow:
     async def run(
         self,
         input: TranslationInput,
-        mistral_api_key: Optional[str] = None,
     ) -> TranslationResult:
         """
         Main entry point for the workflow.
         
         Args:
             input: TranslationInput containing DOCX bytes and target language
-            mistral_api_key: Optional Mistral API key for translation
             
         Returns:
             TranslationResult with translated DOCX bytes
@@ -63,7 +64,6 @@ class DOCXTranslationWorkflow:
         start_time = time.time()
         
         # Step 1: Extract all content from DOCX
-        logger = workflows.workflow.logger
         logger.info(f"Starting DOCX translation to {input.target_language.value}")
         
         content: DOCXContent = await extract_docx_content(input)
@@ -73,11 +73,11 @@ class DOCXTranslationWorkflow:
         chunks: List[TranslationChunk] = await self._create_translation_chunks(content, input)
         logger.info(f"Created {len(chunks)} translation chunks")
         
-        # Step 3: Translate all chunks
+        # Step 3: Translate all chunks (API key from environment variable)
         translated_chunks: List[TranslationChunk] = await translate_content_chunks(
             chunks,
             input.target_language,
-            mistral_api_key,
+            None,  # Uses MISTRAL_API_KEY from environment
         )
         logger.info(f"Translated all chunks")
         
@@ -130,7 +130,7 @@ class DOCXTranslationWorkflow:
         
         # Add tables
         for table_idx, table in enumerate(content.tables):
-            for row_idx, row in enumerate(table.rows):
+            for row_idx, row in enumerate(table):
                 for col_idx, cell in enumerate(row):
                     if cell.text.strip():
                         chunks.append(TranslationChunk(
@@ -179,7 +179,7 @@ class DOCXTranslationWorkflow:
         for para in content.paragraphs:
             all_text.append(para.text)
         for table in content.tables:
-            for row in table.rows:
+            for row in table:
                 for cell in row:
                     all_text.append(cell.text)
         
@@ -193,10 +193,10 @@ class DOCXTranslationWorkflow:
             "de": ["der", "die", "das", "und", "in"],
             "it": ["il", "la", "i", "le", "di"],
             "pt": ["o", "a", "os", "as", "de"],
-            "ru": ["и", "в", "не", "на", "я"],
-            "zh": ["的", "了", "和", "是", "在"],
-            "ar": ["ال", "و", "في", "من", "إلى"],
-            "hi": ["का", "की", "में", "और", "है"],
+            "ru": ["\u0438", "\u0432", "\u043d\u0435", "\u043d\u0430", "\u044f"],
+            "zh": ["\u7684", "\u4e86", "\u548c", "\u662f", "\u5728"],
+            "ar": ["\u0627\u0644", "\u0648", "\u0641\u064a", "\u0645\u0646", "\u0625\u0644\u0649"],
+            "hi": ["\u0915\u093e", "\u0915\u0940", "\u092e\u0947\u0902", "\u0914\u0930", "\u0939\u0948"],
         }
         
         for lang, indicators in language_indicators.items():

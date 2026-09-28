@@ -14,6 +14,9 @@ SIMPLE_WORKFLOW_NAME ?= docx-translation-simple
 
 # API Configuration
 MISTRAL_API_KEY ?= $(shell echo $$MISTRAL_API_KEY)
+MISTRAL_MODEL ?= mistral-large-latest
+WORKFLOW_TIMEOUT ?= 600
+MAX_RETRIES ?= 3
 
 help: ## Show this help message
 	@echo "DOCX Translation Workflow - Makefile Commands"
@@ -35,11 +38,14 @@ lint: ## Run linting
 test: ## Run tests
 	$(UV) run pytest tests/ -v
 
-test-workflow: ## Test the workflow locally
-	@echo "Testing DOCX translation workflow..."
-	$(UV) run python -c ""
+test-workflow: ## Test the workflow locally (with mock translation)
+	@echo "Testing DOCX translation workflow with mock..."
+	@echo "Set MISTRAL_API_KEY to test with real API"
+	MISTRAL_API_KEY=$(MISTRAL_API_KEY) $(UV) run python -c ""
 import asyncio
 import base64
+import os
+os.environ['MISTRAL_API_KEY'] = os.getenv('MISTRAL_API_KEY', 'test-key')
 from src.workflows.translation_workflow import SimpleDOCXTranslationWorkflow
 
 async def test():
@@ -73,19 +79,22 @@ async def test():
     with open('/tmp/translated_test.docx', 'wb') as f:
         f.write(result)
     
-    print('✓ Workflow test passed!')
-    print(f'✓ Translated DOCX saved to /tmp/translated_test.docx')
-    
+    print('\u2713 Workflow test passed!')
+    print(f'\u2713 Translated DOCX saved to /tmp/translated_test.docx')
+
 asyncio.run(test())
 ""
 
 start-worker: ## Start the workflow worker
 	@echo "Starting DOCX translation worker..."
-	$(UV) run python -m mistralai.workflows.worker --workflow $(WORKFLOW_NAME) --skill docx-translator
+	@echo "Using model: $(MISTRAL_MODEL)"
+	@echo "Timeout: $(WORKFLOW_TIMEOUT)s, Max retries: $(MAX_RETRIES)"
+	MISTRAL_API_KEY=$(MISTRAL_API_KEY) MISTRAL_MODEL=$(MISTRAL_MODEL) WORKFLOW_TIMEOUT=$(WORKFLOW_TIMEOUT) MAX_RETRIES=$(MAX_RETRIES) $(UV) run python -m mistralai.workflows.worker --workflow $(WORKFLOW_NAME) --skill docx-translator
 
 start-worker-all: ## Start worker with all workflows and skills
 	@echo "Starting all workers..."
-	$(UV) run python -m mistralai.workflows.worker --workflow $(WORKFLOW_NAME) --workflow $(SIMPLE_WORKFLOW_NAME) --skill docx-translator --skill docx-translator-simple
+	@echo "Using model: $(MISTRAL_MODEL)"
+	MISTRAL_API_KEY=$(MISTRAL_API_KEY) MISTRAL_MODEL=$(MISTRAL_MODEL) WORKFLOW_TIMEOUT=$(WORKFLOW_TIMEOUT) MAX_RETRIES=$(MAX_RETRIES) $(UV) run python -m mistralai.workflows.worker --workflow $(WORKFLOW_NAME) --workflow $(SIMPLE_WORKFLOW_NAME) --skill docx-translator --skill docx-translator-simple
 
 execute: workflow=$(WORKFLOW_NAME) input='{"docx_bytes": "", "target_language": "fr"}' ## Execute a workflow
 	@echo "Executing workflow: $(workflow)"

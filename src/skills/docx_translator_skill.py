@@ -5,6 +5,7 @@ Provides an interface callable from Vibe Work via workflow execution.
 
 import base64
 import logging
+import os
 from typing import Any, Dict, Optional
 
 import mistralai.workflows as workflows
@@ -16,12 +17,17 @@ from src.workflows.translation_workflow import DOCXTranslationWorkflow, SimpleDO
 
 logger = logging.getLogger(__name__)
 
+# Configuration defaults
+DEFAULT_TIMEOUT_SECONDS = int(os.getenv("WORKFLOW_TIMEOUT", "600"))  # 10 minutes
+DEFAULT_RETRY_ATTEMPTS = int(os.getenv("MAX_RETRIES", "3"))
+
 
 class DOCXTranslationInput(BaseModel):
     """Input schema for direct workflow execution (callable from Vibe Work)."""
     docx_base64: str = Field(
         ...,
         description="DOCX file encoded as base64 string",
+        min_length=1,
     )
     target_language: Language = Field(
         ...,
@@ -41,7 +47,7 @@ class DOCXTranslationInput(BaseModel):
     )
     mistral_api_key: Optional[str] = Field(
         default=None,
-        description="Mistral API key for translation (optional)",
+        description="Mistral API key for translation (optional, falls back to env var)",
     )
 
 
@@ -77,6 +83,7 @@ class DOCXTranslationOutput(BaseModel):
         "while preserving all formatting including tables, headers, footers, "
         "styles, and images. Callable from Vibe Work."
     ),
+    timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
 )
 class DOCXTranslatorWorkflow:
     """
@@ -86,7 +93,13 @@ class DOCXTranslatorWorkflow:
     a user-friendly interface with base64-encoded input/output.
     """
 
-    @workflows.workflow.entrypoint
+    @workflows.workflow.entrypoint(
+        timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+        retry_policy=workflows.RetryPolicy(
+            max_attempts=DEFAULT_RETRY_ATTEMPTS,
+            backoff_coefficient=2.0,
+        ),
+    )
     async def run(self, input: DOCXTranslationInput) -> DOCXTranslationOutput:
         """
         Translate a DOCX file.
@@ -98,8 +111,23 @@ class DOCXTranslatorWorkflow:
             DOCXTranslationOutput with base64-encoded translated DOCX
         """
         try:
+            # Validate input
+            if not input.docx_base64:
+                return DOCXTranslationOutput(
+                    translated_docx_base64="",
+                    error="docx_base64 is required",
+                    processing_time_seconds=0.0,
+                )
+            
             # Decode base64 DOCX
-            docx_bytes = base64.b64decode(input.docx_base64)
+            try:
+                docx_bytes = base64.b64decode(input.docx_base64)
+            except Exception as e:
+                return DOCXTranslationOutput(
+                    translated_docx_base64="",
+                    error=f"Invalid base64 encoding: {str(e)}",
+                    processing_time_seconds=0.0,
+                )
             
             # Create translation input
             translation_input = TranslationInput(
@@ -112,11 +140,7 @@ class DOCXTranslatorWorkflow:
             
             # Execute the main translation workflow
             main_workflow = DOCXTranslationWorkflow()
-            result: TranslationResult = await main_workflow.run(
-                translation_input,
-                mistral_api_key=input.mistral_api_key,
-            )
-            
+            result: TranslationResult = await main_workflow.run(translation_input)
             # Encode result to base64
             translated_docx_base64 = base64.b64encode(result.translated_docx_bytes).decode("utf-8")
             
